@@ -1,0 +1,52 @@
+/* 指点网络 原型 管理面板 —— 原生 CSS,无外部依赖。 */
+:root {
+  --bg: #f8fafc; --surface: #fff; --text: #1e293b; --muted: #64748b;
+  --primary: #2563eb; --primary-hover: #1d4ed8; --dark: #0f172a; --soft: #f1f5f9;
+  --danger: #dc2626; --success: #16a34a; --border: #e2e8f0;
+  --r-sm: .5rem; --r-md: .75rem; --shadow: 0 1px 3px rgb(15 23 42 / .08);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; min-height: 100vh; }
+a { color: var(--primary); }
+[hidden] { display: none !important; }
+
+.nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: .6rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+.nav-brand { font-weight: 700; }
+.nav-user { display: none; align-items: center; gap: .75rem; }
+.nav-user.show { display: flex; }
+.btn-link { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; }
+.btn-link:hover { color: var(--danger); }
+
+.container { max-width: 48rem; margin: 0 auto; padding: 2rem 1rem; }
+.section { display: none; } .section.show { display: block; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; }
+.mb { margin-bottom: 1.5rem; } .muted { color: var(--muted); } .danger { color: var(--danger); } .success { color: var(--success); }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 1.25rem; box-shadow: var(--shadow); margin-bottom: 1rem; }
+.auth-card { max-width: 24rem; margin: 2rem auto; }
+.field { margin-bottom: .75rem; }
+.field label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+.input { width: 100%; border: 1px solid var(--border); border-radius: var(--r-sm); padding: .5rem .75rem; font: inherit; }
+.input:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+.input-row { display: flex; align-items: center; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 .75rem; }
+.input-row .input { border: none; } .input-row .suffix { color: var(--muted); white-space: nowrap; }
+
+.btn { display: inline-flex; align-items: center; gap: .4rem; border: 1px solid transparent; border-radius: var(--r-sm); padding: .5rem 1rem; font: inherit; font-weight: 500; cursor: pointer; min-height: 40px; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; } .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-dark { background: var(--dark); color: #fff; }
+.btn-outline { background: var(--surface); border-color: var(--border); } .btn-outline:hover:not(:disabled) { background: var(--bg); }
+.btn-block { width: 100%; }
+.btn-sm { padding: .35rem .75rem; min-height: 36px; font-size: .8rem; }
+.btn-danger-text { background: none; border: none; color: var(--danger); cursor: pointer; font: inherit; }
+.file-btn { position: relative; overflow: hidden; cursor: pointer; }
+.file-btn input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; }
+.tab { flex: 1; padding: .5rem; border-radius: var(--r-sm); border: none; cursor: pointer; background: var(--soft); font: inherit; font-weight: 500; }
+.tab.active { background: var(--dark); color: #fff; }
+.form-msg { font-size: .8rem; color: var(--danger); margin-top: .5rem; min-height: 1.25rem; }
+.card .msg { font-size: .8rem; margin-top: .5rem; min-height: 1.25rem; }
+.empty { text-align: center; color: var(--muted); padding: 3rem 0; }
+.hint { font-size: .75rem; color: var(--muted); margin-top: .75rem; }
+@media (max-width: 360px) { .btn { min-height: 44px; } }

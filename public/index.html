@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>指点网络 · 原型</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-brand">指点网络 <span class="muted" style="font-weight:400;font-size:.8rem">原型</span></div>
+  <div id="nav-user" class="nav-user">
+    <span id="nav-username" class="muted"></span>
+    <button type="button" class="btn-link" id="btn-logout">退出</button>
+  </div>
+</nav>
+
+<main class="container">
+  <!-- 登录/注册 -->
+  <section id="view-auth" class="section">
+    <div class="card auth-card">
+      <div class="tabs">
+        <button type="button" id="tab-login" class="tab active">登录</button>
+        <button type="button" id="tab-register" class="tab">注册</button>
+      </div>
+      <form id="auth-form">
+        <div class="field"><label for="f-username">用户名</label><input id="f-username" class="input" placeholder="3~20 位字母/数字/横线/下划线"></div>
+        <div class="field" id="email-field"><label for="f-email">邮箱(可选)</label><input id="f-email" type="email" class="input" placeholder="原型不验证邮箱"></div>
+        <div class="field"><label for="f-password">密码</label><input id="f-password" type="password" class="input" placeholder="至少 8 位"></div>
+        <button type="submit" id="btn-auth" class="btn btn-primary btn-block">登录</button>
+        <p id="auth-msg" class="form-msg" aria-live="polite"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="view-dash" class="section">
+    <div class="row mb">
+      <h1 style="margin:0;font-size:1.25rem">我的网站</h1>
+      <button type="button" id="btn-create" class="btn btn-primary">+ 新建站点</button>
+    </div>
+    <div id="create-box" class="card" hidden>
+      <h2 style="margin:0 0 .75rem;font-size:1rem">新建站点</h2>
+      <form id="create-form">
+        <div class="field"><label for="c-name">站点名称</label><input id="c-name" class="input" placeholder="如:我的博客"></div>
+        <div class="field"><label for="c-subdomain">子域名</label>
+          <div class="input-row"><input id="c-subdomain" class="input" placeholder="my-site"><span class="suffix" id="c-suffix">.localhost</span></div>
+        </div>
+        <button type="submit" id="btn-create-submit" class="btn btn-dark">创建</button>
+        <p id="create-msg" class="form-msg" aria-live="polite"></p>
+      </form>
+    </div>
+    <div id="site-list"></div>
+    <p id="empty-tip" class="empty" hidden>还没有站点,点右上角「新建站点」开始。</p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+async function api(url, opts = {}) {
+  const init = { credentials: 'same-origin', method: opts.method || 'GET', headers: opts.headers || {} };
+  if (opts.json !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.json); }
+  if (opts.body !== undefined) init.body = opts.body;
+  let res;
+  try { res = await fetch(url, init); } catch { throw new Error('网络连接失败'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { if (res.status === 401) goAuth(); throw new Error(data.error || ('请求失败 ' + res.status)); }
+  return data;
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let ME = null, DOMAIN = 'localhost', authMode = 'login';
+
+function switchTab(mode) {
+  authMode = mode;
+  $('email-field').hidden = true; // 原型不收集邮箱
+  $('tab-login').classList.toggle('active', mode === 'login');
+  $('tab-register').classList.toggle('active', mode === 'register');
+  $('btn-auth').textContent = mode === 'login' ? '登录' : '注册';
+  $('auth-msg').textContent = '';
+  $('f-username').focus();
+}
+async function submitAuth(e) {
+  e.preventDefault();
+  const btn = $('btn-auth'); const msg = $('auth-msg');
+  msg.textContent = ''; btn.disabled = true; btn.textContent = '处理中…';
+  try {
+    const body = { username: $('f-username').value.trim(), password: $('f-password').value };
+    const r = await api('/api/' + authMode, { method: 'POST', json: body });
+    ME = r.user; $('f-password').value = ''; enterDash();
+  } catch (err) { msg.textContent = err.message; }
+  finally { btn.disabled = false; btn.textContent = authMode === 'login' ? '登录' : '注册'; }
+}
+function goAuth() {
+  ME = null;
+  $('view-dash').classList.remove('show'); $('view-auth').classList.add('show');
+  $('nav-user').classList.remove('show'); $('f-password').value = ''; $('f-username').focus();
+}
+async function doLogout() { await api('/api/logout', { method: 'POST' }).catch(() => {}); goAuth(); }
+
+function enterDash() {
+  $('view-auth').classList.remove('show'); $('view-dash').classList.add('show');
+  $('nav-user').classList.add('show'); $('nav-username').textContent = ME.username;
+  $('c-suffix').textContent = '.' + DOMAIN; loadSites();
+}
+function showCreate() {
+  $('create-box').hidden = !$('create-box').hidden;
+  if (!$('create-box').hidden && !$('c-subdomain').value) $('c-subdomain').value = (ME.username || '').toLowerCase();
+  if (!$('create-box').hidden) $('c-name').focus();
+}
+async function createSite(e) {
+  e.preventDefault();
+  const btn = $('btn-create-submit'); const msg = $('create-msg');
+  msg.textContent = ''; btn.disabled = true;
+  try {
+    await api('/api/sites', { method: 'POST', json: { name: $('c-name').value, subdomain: $('c-subdomain').value } });
+    $('create-box').hidden = true; $('c-name').value = ''; $('c-subdomain').value = '';
+    await loadSites();
+  } catch (err) { msg.textContent = err.message; }
+  finally { btn.disabled = false; }
+}
+async function loadSites() {
+  const { sites, siteDomain } = await api('/api/sites');
+  DOMAIN = siteDomain; $('c-suffix').textContent = '.' + DOMAIN;
+  $('empty-tip').hidden = sites.length > 0;
+  $('site-list').innerHTML = sites.map((s) => {
+    const url = `http://${s.subdomain}.${DOMAIN}`;
+    return `<div class="card">
+      <div class="row">
+        <div>
+          <div style="font-weight:500">${esc(s.name)}</div>
+          <div><a href="${url}" target="_blank" rel="noopener">${esc(s.subdomain)}.${DOMAIN}</a></div>
+        </div>
+        <div class="row" style="gap:.5rem">
+          <label class="btn btn-primary btn-sm file-btn">上传 ZIP<input type="file" accept=".zip" data-deploy="${s.id}"></label>
+          <button type="button" class="btn-danger-text" data-del="${s.id}">删除</button>
+        </div>
+      </div>
+      <p class="msg" id="msg-${s.id}" aria-live="polite"></p>
+    </div>`;
+  }).join('');
+}
+async function uploadZip(siteId, input) {
+  const msg = $('msg-' + siteId); const file = input.files[0]; if (!file) return;
+  msg.className = 'msg muted'; msg.textContent = '上传部署中…';
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const r = await api('/api/sites/' + siteId + '/deploy', { method: 'POST', body: fd });
+    msg.className = 'msg success';
+    msg.innerHTML = '✓ 部署成功(' + r.fileCount + ' 个文件)→ <a href="' + r.url + '" target="_blank" rel="noopener">' + r.url + '</a>';
+    await loadSites();
+  } catch (err) { msg.className = 'msg danger'; msg.textContent = err.message; }
+  input.value = '';
+}
+async function delSite(id) {
+  if (!confirm('确定删除该站点?文件将立即下线。')) return;
+  try { await api('/api/sites/' + id, { method: 'DELETE' }); await loadSites(); }
+  catch (err) { alert(err.message); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('tab-login').addEventListener('click', () => switchTab('login'));
+  $('tab-register').addEventListener('click', () => switchTab('register'));
+  $('auth-form').addEventListener('submit', submitAuth);
+  $('btn-logout').addEventListener('click', doLogout);
+  $('btn-create').addEventListener('click', showCreate);
+  $('create-form').addEventListener('submit', createSite);
+  $('c-subdomain').addEventListener('input', (e) => { e.target.value = e.target.value.toLowerCase(); });
+  document.addEventListener('change', (e) => {
+    if (e.target.matches('input[type=file][data-deploy]')) uploadZip(e.target.dataset.deploy, e.target);
+  });
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-del]'); if (t) delSite(t.dataset.del);
+  });
+  (async () => {
+    try { const r = await api('/api/me'); ME = r.user; DOMAIN = r.siteDomain; enterDash(); }
+    catch { $('view-auth').classList.add('show'); $('f-username').focus(); }
+  })();
+});
+</script>
+</body>
+</html>

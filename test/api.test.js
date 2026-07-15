@@ -88,7 +88,7 @@ test('创建站点返回 URL,子域名规则与重复校验', async () => {
   const { cookie } = await register('erin');
   const r = await req('POST', '/api/sites', { cookie, json: { name: '博客', subdomain: 'erin-blog' } });
   assert.equal(r.status, 200);
-  assert.equal((await r.json()).url, 'http://erin-blog.example.com');
+  assert.equal((await r.json()).url, 'http://erin-blog.example.com/');
   assert.equal((await req('POST', '/api/sites', { cookie, json: { name: 'x', subdomain: 'AB' } })).status, 400); // 非法
   assert.equal((await req('POST', '/api/sites', { cookie, json: { name: 'x', subdomain: 'admin' } })).status, 400); // 保留词
   assert.equal((await req('POST', '/api/sites', { cookie, json: { name: 'x', subdomain: 'erin-blog' } })).status, 409); // 重复

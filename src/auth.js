@@ -6,7 +6,7 @@ import { httpErr } from './errors.js';
 const SESSION_DAYS = 7;
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-export function register({ username, password }) {
+export function register({ username, password, isAdmin = false }) {
   username = String(username || '').trim().toLowerCase();
   password = String(password || '');
   if (!/^[a-z0-9_-]{3,20}$/.test(username)) throw httpErr(400, '用户名需为 3~20 位小写字母/数字/横线/下划线');
@@ -14,7 +14,7 @@ export function register({ username, password }) {
 
   const hash = bcrypt.hashSync(password, 10);
   try {
-    const r = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
+    const r = db.prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, hash, isAdmin ? 1 : 0);
     return r.lastInsertRowid;
   } catch (e) {
     if (String(e.message).includes('UNIQUE')) throw httpErr(409, '用户名已被注册');

@@ -1,5 +1,11 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+// 必定加载 .env(不依赖 pm2 env_file),路径相对于本文件,不受 cwd 影响
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const num = (v, d) => (v && !Number.isNaN(Number(v)) ? Number(v) : d);
 

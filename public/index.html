@@ -11,12 +11,12 @@
   <div class="nav-brand">指点网络 <span class="muted" style="font-weight:400;font-size:.8rem">原型</span></div>
   <div id="nav-user" class="nav-user">
     <span id="nav-username" class="muted"></span>
+    <button type="button" id="btn-admin" class="btn-link" hidden>管理后台</button>
     <button type="button" class="btn-link" id="btn-logout">退出</button>
   </div>
 </nav>
 
 <main class="container">
-  <!-- 登录/注册 -->
   <section id="view-auth" class="section">
     <div class="card auth-card">
       <div class="tabs">
@@ -25,7 +25,7 @@
       </div>
       <form id="auth-form">
         <div class="field"><label for="f-username">用户名</label><input id="f-username" class="input" placeholder="3~20 位字母/数字/横线/下划线"></div>
-        <div class="field" id="email-field"><label for="f-email">邮箱(可选)</label><input id="f-email" type="email" class="input" placeholder="原型不验证邮箱"></div>
+        <div class="field" id="email-field" hidden><label for="f-email">邮箱(可选)</label><input id="f-email" type="email" class="input" placeholder="原型不验证邮箱"></div>
         <div class="field"><label for="f-password">密码</label><input id="f-password" type="password" class="input" placeholder="至少 8 位"></div>
         <button type="submit" id="btn-auth" class="btn btn-primary btn-block">登录</button>
         <p id="auth-msg" class="form-msg" aria-live="polite"></p>
@@ -33,7 +33,6 @@
     </div>
   </section>
 
-  <!-- Dashboard -->
   <section id="view-dash" class="section">
     <div class="row mb">
       <h1 style="margin:0;font-size:1.25rem">我的网站</h1>
@@ -53,8 +52,44 @@
     <div id="site-list"></div>
     <p id="empty-tip" class="empty" hidden>还没有站点,点右上角「新建站点」开始。</p>
   </section>
+
+  <section id="view-admin" class="section">
+    <div class="row mb">
+      <h1 style="margin:0;font-size:1.25rem">管理后台</h1>
+      <button type="button" id="btn-back-dash" class="btn btn-outline">返回我的网站</button>
+    </div>
+    <div class="tabs" style="margin-bottom:1.5rem">
+      <button type="button" class="tab active" data-admin-tab="moderations">审核队列</button>
+      <button type="button" class="tab" data-admin-tab="sites">站点管理</button>
+      <button type="button" class="tab" data-admin-tab="users">用户管理</button>
+    </div>
+
+    <div id="admin-moderations" class="admin-panel">
+      <div class="row mb">
+        <span class="muted">筛选:</span>
+        <div style="display:flex;gap:.5rem">
+          <button type="button" class="btn btn-sm btn-outline active" data-mod-filter="all">全部</button>
+          <button type="button" class="btn btn-sm btn-outline" data-mod-filter="suspect">疑似</button>
+          <button type="button" class="btn btn-sm btn-outline" data-mod-filter="rejected">未通过</button>
+        </div>
+      </div>
+      <div id="mod-list"></div>
+      <p id="mod-empty" class="empty" hidden>暂无审核记录</p>
+    </div>
+
+    <div id="admin-sites" class="admin-panel" hidden>
+      <div id="admin-site-list"></div>
+      <p id="admin-site-empty" class="empty" hidden>暂无站点</p>
+    </div>
+
+    <div id="admin-users" class="admin-panel" hidden>
+      <div id="user-list"></div>
+      <p id="user-empty" class="empty" hidden>暂无用户</p>
+    </div>
+  </section>
 </main>
 
+<script src="/vendor/jszip.min.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 async function api(url, opts = {}) {
@@ -70,10 +105,17 @@ async function api(url, opts = {}) {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 let ME = null, DOMAIN = 'localhost', authMode = 'login';
+const isIp = (d) => /^\d{1,3}(\.\d{1,3}){3}$/.test(d);
+const siteUrl = (sub) => (isIp(DOMAIN) ? `/s/${sub}/` : `http://${sub}.${DOMAIN}/`);
+
+const DIM_ICONS = { pornography: '🔞', violence: '🔫', political: '🚫', spam: '📢', drugs_gambling: '🚬' };
+const DIM_NAMES = { pornography: '色情低俗', violence: '暴力恐怖', political: '政治敏感', spam: '广告欺诈', drugs_gambling: '毒品赌博' };
+const STATUS_MAP = { pending: '待审核', passed: '通过', rejected: '未通过', suspect: '疑似' };
+const STATUS_COLOR = { pending: 'muted', passed: 'success', rejected: 'danger', suspect: 'warning' };
 
 function switchTab(mode) {
   authMode = mode;
-  $('email-field').hidden = true; // 原型不收集邮箱
+  $('email-field').hidden = true;
   $('tab-login').classList.toggle('active', mode === 'login');
   $('tab-register').classList.toggle('active', mode === 'register');
   $('btn-auth').textContent = mode === 'login' ? '登录' : '注册';
@@ -93,16 +135,32 @@ async function submitAuth(e) {
 }
 function goAuth() {
   ME = null;
-  $('view-dash').classList.remove('show'); $('view-auth').classList.add('show');
+  $('view-dash').classList.remove('show'); $('view-auth').classList.add('show'); $('view-admin').classList.remove('show');
   $('nav-user').classList.remove('show'); $('f-password').value = ''; $('f-username').focus();
 }
 async function doLogout() { await api('/api/logout', { method: 'POST' }).catch(() => {}); goAuth(); }
 
 function enterDash() {
-  $('view-auth').classList.remove('show'); $('view-dash').classList.add('show');
+  $('view-auth').classList.remove('show'); $('view-admin').classList.remove('show'); $('view-dash').classList.add('show');
   $('nav-user').classList.add('show'); $('nav-username').textContent = ME.username;
-  $('c-suffix').textContent = '.' + DOMAIN; loadSites();
+  $('btn-admin').hidden = !ME.isAdmin;
+  $('c-suffix').textContent = isIp(DOMAIN) ? '/s/' : '.' + DOMAIN; loadSites();
 }
+
+function showAdmin() {
+  $('view-dash').classList.remove('show'); $('view-admin').classList.add('show');
+  loadModerations();
+}
+
+function switchAdminTab(tab) {
+  document.querySelectorAll('.admin-panel').forEach(p => p.hidden = true);
+  $('admin-' + tab).hidden = false;
+  document.querySelectorAll('[data-admin-tab]').forEach(t => t.classList.toggle('active', t.dataset.adminTab === tab));
+  if (tab === 'moderations') loadModerations();
+  if (tab === 'sites') loadAdminSites();
+  if (tab === 'users') loadUsers();
+}
+
 function showCreate() {
   $('create-box').hidden = !$('create-box').hidden;
   if (!$('create-box').hidden && !$('c-subdomain').value) $('c-subdomain').value = (ME.username || '').toLowerCase();
@@ -121,20 +179,29 @@ async function createSite(e) {
 }
 async function loadSites() {
   const { sites, siteDomain } = await api('/api/sites');
-  DOMAIN = siteDomain; $('c-suffix').textContent = '.' + DOMAIN;
+  DOMAIN = siteDomain; $('c-suffix').textContent = isIp(DOMAIN) ? '/s/' : '.' + DOMAIN;
   $('empty-tip').hidden = sites.length > 0;
   $('site-list').innerHTML = sites.map((s) => {
-    const url = `http://${s.subdomain}.${DOMAIN}`;
+    const url = siteUrl(s.subdomain);
+    const modBadge = s.moderation_status === 'suspect' 
+      ? '<span class="badge suspect">⚠️ 疑似违规</span>' 
+      : s.moderation_status === 'rejected' 
+        ? '<span class="badge danger">❌ 审核未通过</span>' 
+        : '';
     return `<div class="card">
       <div class="row">
         <div>
-          <div style="font-weight:500">${esc(s.name)}</div>
-          <div><a href="${url}" target="_blank" rel="noopener">${esc(s.subdomain)}.${DOMAIN}</a></div>
+          <div style="font-weight:500">${esc(s.name)} ${modBadge}</div>
+          <div><a href="${url}" target="_blank" rel="noopener">${esc(s.subdomain)}${isIp(DOMAIN) ? ' (/s/)' : '.' + DOMAIN}</a></div>
         </div>
         <div class="row" style="gap:.5rem">
           <label class="btn btn-primary btn-sm file-btn">上传 ZIP<input type="file" accept=".zip" data-deploy="${s.id}"></label>
           <button type="button" class="btn-danger-text" data-del="${s.id}">删除</button>
         </div>
+      </div>
+      <div class="dropzone" id="drop-${s.id}" data-drop="${s.id}">
+        <span class="dz-text">📁 拖拽文件夹到这里,或 <button type="button" class="btn-link" data-folder="${s.id}">选择文件夹</button></span>
+        <input type="file" webkitdirectory directory data-folder-input="${s.id}" hidden>
       </div>
       <p class="msg" id="msg-${s.id}" aria-live="polite"></p>
     </div>`;
@@ -147,10 +214,62 @@ async function uploadZip(siteId, input) {
     const fd = new FormData(); fd.append('file', file);
     const r = await api('/api/sites/' + siteId + '/deploy', { method: 'POST', body: fd });
     msg.className = 'msg success';
-    msg.innerHTML = '✓ 部署成功(' + r.fileCount + ' 个文件)→ <a href="' + r.url + '" target="_blank" rel="noopener">' + r.url + '</a>';
-    await loadSites();
+    const modInfo = r.moderation && r.moderation.status !== 'passed' 
+      ? ` (${DIM_ICONS[r.moderation.dimension]} ${r.moderation.status === 'suspect' ? '疑似违规' : '审核未通过'})` 
+      : '';
+    msg.innerHTML = '✓ 部署成功(' + r.fileCount + ' 个文件)' + modInfo + '→ <a href="' + r.url + '" target="_blank" rel="noopener">' + r.url + '</a>';
   } catch (err) { msg.className = 'msg danger'; msg.textContent = err.message; }
   input.value = '';
+}
+
+async function readDirEntries(dirEntry, prefix = '') {
+  const reader = dirEntry.createReader();
+  const entries = await new Promise((res, rej) => reader.readEntries(res, rej));
+  const results = [];
+  for (const entry of entries) {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      results.push({ file, relativePath: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      results.push(...await readDirEntries(entry, prefix + entry.name + '/'));
+    }
+  }
+  return results;
+}
+async function filesFromDrop(e) {
+  const items = [...(e.dataTransfer?.items || [])];
+  const results = [];
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry?.();
+    if (!entry) { const f = item.getAsFile(); if (f) results.push({ file: f, relativePath: f.name }); continue; }
+    if (entry.isFile) {
+      const f = await new Promise((res, rej) => entry.file(res, rej));
+      results.push({ file: f, relativePath: entry.fullPath.replace(/^\//, '') });
+    } else if (entry.isDirectory) {
+      results.push(...await readDirEntries(entry, ''));
+    }
+  }
+  return results;
+}
+function filesFromFolderInput(input) {
+  return [...input.files].map((f) => ({ file: f, relativePath: f.webkitRelativePath || f.name }));
+}
+async function packAndUpload(siteId, files) {
+  const msg = $('msg-' + siteId);
+  if (!files.length) { msg.className = 'msg danger'; msg.textContent = '未选择任何文件'; return; }
+  if (typeof JSZip === 'undefined') { msg.className = 'msg danger'; msg.textContent = '打包库加载失败,请刷新页面重试'; return; }
+  msg.className = 'msg muted'; msg.textContent = '正在打包 ' + files.length + ' 个文件…';
+  try {
+    const zip = new JSZip();
+    for (const { file, relativePath } of files) zip.file(relativePath, file);
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const zipFile = new File([blob], 'folder-upload.zip', { type: 'application/zip' });
+    msg.textContent = '上传部署中…(' + (blob.size / 1048576).toFixed(1) + 'MB)';
+    const fd = new FormData(); fd.append('file', zipFile);
+    const r = await api('/api/sites/' + siteId + '/deploy', { method: 'POST', body: fd });
+    msg.className = 'msg success';
+    msg.innerHTML = '✓ 部署成功(' + r.fileCount + ' 个文件)→ <a href="' + r.url + '" target="_blank" rel="noopener">' + r.url + '</a>';
+  } catch (err) { msg.className = 'msg danger'; msg.textContent = err.message; }
 }
 async function delSite(id) {
   if (!confirm('确定删除该站点?文件将立即下线。')) return;
@@ -158,20 +277,171 @@ async function delSite(id) {
   catch (err) { alert(err.message); }
 }
 
+async function loadModerations(filter = 'all') {
+  const url = filter === 'all' ? '/api/admin/moderations' : `/api/admin/moderations?status=${filter}`;
+  const { moderations } = await api(url);
+  $('mod-empty').hidden = moderations.length > 0;
+  $('mod-list').innerHTML = moderations.map((m) => {
+    const icon = m.dimension ? DIM_ICONS[m.dimension] : '📋';
+    const dimName = m.dimension ? DIM_NAMES[m.dimension] : '';
+    const actions = m.status === 'suspect' || m.status === 'rejected' ? `
+      <div class="row" style="gap:.5rem;margin-top:.75rem">
+        <button type="button" class="btn btn-sm btn-primary" data-approve="${m.id}">通过</button>
+        <button type="button" class="btn btn-sm btn-outline" data-reject="${m.id}">拒绝</button>
+      </div>
+    ` : '';
+    return `<div class="card">
+      <div class="row">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <span>${icon}</span>
+            <span style="font-weight:500">${esc(m.site_name)}</span>
+            <span class="badge ${STATUS_COLOR[m.status]}">${STATUS_MAP[m.status]}</span>
+          </div>
+          <div style="margin-top:.25rem;color:var(--muted);font-size:.85rem">
+            用户: ${esc(m.user_name)} | 站点: ${esc(m.subdomain)}
+          </div>
+          ${m.dimension ? `<div style="margin-top:.25rem;color:var(--danger);font-size:.85rem">${dimName} (置信度: ${m.confidence}%)</div>` : ''}
+          ${m.reason ? `<div style="margin-top:.25rem;color:var(--muted);font-size:.85rem">${esc(m.reason)}</div>` : ''}
+          ${m.content_snippet ? `<div style="margin-top:.25rem;padding:.5rem;background:var(--soft);border-radius:var(--r-sm);font-size:.8rem;color:var(--text)">${esc(m.content_snippet)}</div>` : ''}
+          ${m.file_path ? `<div style="margin-top:.25rem;color:var(--muted);font-size:.8rem">触发文件: ${esc(m.file_path)}</div>` : ''}
+        </div>
+      </div>
+      ${actions}
+    </div>`;
+  }).join('');
+}
+
+async function approveMod(id) {
+  if (!confirm('确定通过该审核?站点将上线。')) return;
+  await api('/api/admin/moderations/' + id + '/approve', { method: 'POST' });
+  loadModerations(document.querySelector('[data-mod-filter].active')?.dataset.modFilter || 'all');
+}
+
+async function rejectMod(id) {
+  if (!confirm('确定拒绝该审核?站点将下线。')) return;
+  await api('/api/admin/moderations/' + id + '/reject', { method: 'POST' });
+  loadModerations(document.querySelector('[data-mod-filter].active')?.dataset.modFilter || 'all');
+}
+
+async function loadAdminSites() {
+  const { sites } = await api('/api/admin/sites');
+  $('admin-site-empty').hidden = sites.length > 0;
+  $('admin-site-list').innerHTML = sites.map((s) => {
+    const url = siteUrl(s.subdomain);
+    const statusBadge = s.status === 'active' 
+      ? '<span class="badge success">✅ 运行中</span>' 
+      : '<span class="badge danger">❌ 已下线</span>';
+    const modBadge = s.moderation_status === 'passed' 
+      ? '<span class="badge success">✓ 已审核</span>' 
+      : s.moderation_status === 'rejected'
+        ? '<span class="badge danger">❌ 未通过</span>'
+        : s.moderation_status === 'suspect'
+          ? '<span class="badge warning">⚠️ 疑似</span>'
+          : '<span class="badge muted">⏳ 待审核</span>';
+    return `<div class="card">
+      <div class="row">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <span style="font-weight:500">${esc(s.name)}</span>
+            ${statusBadge}
+            ${modBadge}
+          </div>
+          <div style="margin-top:.25rem;color:var(--muted);font-size:.85rem">
+            用户: ${esc(s.user_name)} | <a href="${url}" target="_blank" rel="noopener">${esc(s.subdomain)}${isIp(DOMAIN) ? ' (/s/)' : '.' + DOMAIN}</a>
+          </div>
+        </div>
+        <div class="row" style="gap:.5rem">
+          <button type="button" class="btn btn-sm btn-outline" data-toggle-site="${s.id}">${s.status === 'active' ? '下线' : '上线'}</button>
+          <button type="button" class="btn btn-sm btn-danger-text" data-del-admin-site="${s.id}">删除</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleSiteStatus(id) {
+  await api('/api/admin/sites/' + id + '/toggle-status', { method: 'POST' });
+  loadAdminSites();
+}
+
+async function delAdminSite(id) {
+  if (!confirm('确定删除该站点?文件将立即下线。')) return;
+  await api('/api/admin/sites/' + id, { method: 'DELETE' });
+  loadAdminSites();
+}
+
+async function loadUsers() {
+  const { users } = await api('/api/admin/users');
+  $('user-empty').hidden = users.length > 0;
+  $('user-list').innerHTML = users.map((u) => {
+    return `<div class="card">
+      <div class="row">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <span style="font-weight:500">${esc(u.username)}</span>
+            ${u.is_admin ? '<span class="badge success">🔧 管理员</span>' : ''}
+          </div>
+          <div style="margin-top:.25rem;color:var(--muted);font-size:.85rem">创建时间: ${esc(u.created_at)}</div>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline" data-toggle-admin="${u.id}">${u.is_admin ? '取消管理员' : '设为管理员'}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleAdmin(id) {
+  await api('/api/admin/users/' + id + '/toggle-admin', { method: 'POST' });
+  loadUsers();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   $('tab-login').addEventListener('click', () => switchTab('login'));
   $('tab-register').addEventListener('click', () => switchTab('register'));
   $('auth-form').addEventListener('submit', submitAuth);
   $('btn-logout').addEventListener('click', doLogout);
+  $('btn-admin').addEventListener('click', showAdmin);
+  $('btn-back-dash').addEventListener('click', enterDash);
   $('btn-create').addEventListener('click', showCreate);
   $('create-form').addEventListener('submit', createSite);
   $('c-subdomain').addEventListener('input', (e) => { e.target.value = e.target.value.toLowerCase(); });
+  
+  document.querySelectorAll('[data-admin-tab]').forEach(t => {
+    t.addEventListener('click', () => switchAdminTab(t.dataset.adminTab));
+  });
+  
+  document.querySelectorAll('[data-mod-filter]').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('[data-mod-filter]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      loadModerations(b.dataset.modFilter);
+    });
+  });
+
   document.addEventListener('change', (e) => {
     if (e.target.matches('input[type=file][data-deploy]')) uploadZip(e.target.dataset.deploy, e.target);
+    if (e.target.matches('input[data-folder-input]')) { packAndUpload(e.target.dataset.folderInput, filesFromFolderInput(e.target)); e.target.value = ''; }
   });
+
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-del]'); if (t) delSite(t.dataset.del);
+    const d = e.target.closest('[data-del]'); if (d) delSite(d.dataset.del);
+    const f = e.target.closest('[data-folder]'); if (f) { e.preventDefault(); const inp = document.querySelector('input[data-folder-input="' + f.dataset.folder + '"]'); if (inp) inp.click(); }
+    
+    const app = e.target.closest('[data-approve]'); if (app) approveMod(app.dataset.approve);
+    const rej = e.target.closest('[data-reject]'); if (rej) rejectMod(rej.dataset.reject);
+    const ts = e.target.closest('[data-toggle-site]'); if (ts) toggleSiteStatus(ts.dataset.toggleSite);
+    const das = e.target.closest('[data-del-admin-site]'); if (das) delAdminSite(das.dataset.delAdminSite);
+    const ta = e.target.closest('[data-toggle-admin]'); if (ta) toggleAdmin(ta.dataset.toggleAdmin);
   });
+
+  document.addEventListener('dragover', (e) => { const dz = e.target.closest('[data-drop]'); if (!dz) return; e.preventDefault(); dz.classList.add('dz-active'); });
+  document.addEventListener('dragleave', (e) => { const dz = e.target.closest('[data-drop]'); if (!dz) return; dz.classList.remove('dz-active'); });
+  document.addEventListener('drop', async (e) => {
+    const dz = e.target.closest('[data-drop]'); if (!dz) return;
+    e.preventDefault(); dz.classList.remove('dz-active');
+    const files = await filesFromDrop(e); packAndUpload(dz.dataset.drop, files);
+  });
+
   (async () => {
     try { const r = await api('/api/me'); ME = r.user; DOMAIN = r.siteDomain; enterDash(); }
     catch { $('view-auth').classList.add('show'); $('f-username').focus(); }

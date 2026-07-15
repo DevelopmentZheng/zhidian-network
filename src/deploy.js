@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import AdmZip from 'adm-zip';
 import { config, dirs } from './config.js';
 import { httpErr } from './errors.js';
+import { moderateContent, saveModeration } from './moderation.js';
+import db from './db.js';
 
 const MAX_ENTRIES = 5000;
 
@@ -56,9 +58,19 @@ export function inspectZip(zipBuffer) {
   return { entries, rootPrefix };
 }
 
-/** 原子部署:解压到临时目录 → rename 替换线上目录。返回 { fileCount, sizeBytes } */
-export function deployZip(subdomain, zipBuffer) {
+export function deployZip(subdomain, zipBuffer, siteId) {
   const { entries, rootPrefix } = inspectZip(zipBuffer);
+
+  const moderationResult = moderateContent(entries, rootPrefix);
+  
+  if (siteId) {
+    saveModeration(db, siteId, moderationResult);
+  }
+  
+  if (moderationResult.status === 'rejected') {
+    throw httpErr(403, `内容审核未通过：${moderationResult.reason}`);
+  }
+
   const liveDir = path.join(dirs.sites, subdomain);
   const tmpDir = path.join(dirs.tmp, `${subdomain}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
   const oldDir = tmpDir + '.old';
@@ -70,7 +82,7 @@ export function deployZip(subdomain, zipBuffer) {
       const rel = e.entryName.slice(rootPrefix.length);
       if (!rel) continue;
       const dest = path.join(tmpDir, rel);
-      if (!dest.startsWith(tmpDir + path.sep)) throw httpErr(400, `非法路径: ${e.entryName}`); // 兜底
+      if (!dest.startsWith(tmpDir + path.sep)) throw httpErr(400, `非法路径: ${e.entryName}`);
       let data;
       try {
         data = e.getData();
@@ -92,7 +104,12 @@ export function deployZip(subdomain, zipBuffer) {
     if (fs.existsSync(oldDir) && !fs.existsSync(liveDir)) fs.renameSync(oldDir, liveDir);
     throw err;
   }
-  return { fileCount: entries.length, sizeBytes: written };
+
+  return { 
+    fileCount: entries.length, 
+    sizeBytes: written,
+    moderation: moderationResult
+  };
 }
 
 /** 删除站点文件(删除站点时调用) */

@@ -58,10 +58,10 @@ export function inspectZip(zipBuffer) {
   return { entries, rootPrefix };
 }
 
-export function deployZip(subdomain, zipBuffer, siteId) {
+export async function deployZip(subdomain, zipBuffer, siteId) {
   const { entries, rootPrefix } = inspectZip(zipBuffer);
 
-  const moderationResult = moderateContent(entries, rootPrefix);
+  const moderationResult = await moderateContent(entries, rootPrefix);
   
   if (siteId) {
     saveModeration(db, siteId, moderationResult);

@@ -82,8 +82,182 @@ function extractSnippet(text, pattern) {
   return text.slice(0, 100) + '...';
 }
 
-export function moderateContent(entries, rootPrefix) {
-  const { threshold, suspectThreshold } = config.moderation || { threshold: 50, suspectThreshold: 20 };
+async function moderateWithAI(text) {
+  const { ai, threshold, suspectThreshold } = config.moderation;
+  
+  if (!ai.apiKey) {
+    console.warn('AI审核: 未配置API Key,降级为规则引擎');
+    return null;
+  }
+
+  const prompt = `你是一个内容安全审核专家，请对以下文本进行内容安全审核。
+
+文本内容：
+${text}
+
+请按照以下五个维度进行评分（0-100分，分数越高表示越可能违规）：
+
+1. pornography（色情低俗）：包含裸露、性暗示、低俗色情等内容
+2. violence（暴力恐怖）：包含血腥、暴力、恐怖主义等内容
+3. political（政治敏感）：包含敏感政治人物、事件、言论等内容
+4. spam（广告欺诈）：包含垃圾广告、虚假宣传、诈骗信息等内容
+5. drugs_gambling（毒品赌博）：包含毒品、赌博等内容
+
+请输出严格的JSON格式结果（不要包含任何Markdown标记或额外文字）：
+{
+  "pornography": 0-100,
+  "violence": 0-100,
+  "political": 0-100,
+  "spam": 0-100,
+  "drugs_gambling": 0-100,
+  "violation_dimension": "none" | "pornography" | "violence" | "political" | "spam" | "drugs_gambling",
+  "reason": "违规原因描述（如无违规则为空字符串）"
+}`;
+
+  try {
+    let response;
+    switch (ai.provider.toLowerCase()) {
+      case 'openai':
+        response = await callOpenAI(prompt, ai);
+        break;
+      case 'anthropic':
+        response = await callAnthropic(prompt, ai);
+        break;
+      case 'gemini':
+        response = await callGemini(prompt, ai);
+        break;
+      default:
+        console.warn(`不支持的AI服务商: ${ai.provider},降级为规则引擎`);
+        return null;
+    }
+
+    let jsonStr = response.trim();
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    }
+
+    const result = JSON.parse(jsonStr);
+
+    let maxScore = 0;
+    let violationDim = result.violation_dimension;
+    
+    for (const dim of ['pornography', 'violence', 'political', 'spam', 'drugs_gambling']) {
+      if (result[dim] > maxScore) {
+        maxScore = result[dim];
+      }
+    }
+
+    if (violationDim === 'none') {
+      violationDim = null;
+    }
+
+    let status = 'passed';
+    if (maxScore > threshold) {
+      status = 'rejected';
+    } else if (maxScore > suspectThreshold) {
+      status = 'suspect';
+    }
+
+    let reason = '';
+    if (status !== 'passed' && violationDim && DIMENSIONS[violationDim]) {
+      reason = `${DIMENSIONS[violationDim].icon} ${DIMENSIONS[violationDim].name}内容检测`;
+      if (result.reason) {
+        reason += `: ${result.reason}`;
+      }
+    }
+
+    return {
+      status,
+      dimension: violationDim,
+      confidence: maxScore > 0 ? maxScore : null,
+      reason,
+      file_path: null,
+      content_snippet: text.length > 100 ? text.slice(0, 100) + '...' : text,
+      model_used: `${ai.provider}_${ai.model}`,
+      ai_result: result,
+    };
+  } catch (err) {
+    console.error('AI审核失败:', err.message);
+    return null;
+  }
+}
+
+async function callOpenAI(prompt, ai) {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ai.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: ai.model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      max_tokens: 500,
+    }),
+    timeout: ai.timeout,
+  });
+
+  if (!res.ok) {
+    throw new Error(`OpenAI API error: ${res.status} ${await res.text()}`);
+  }
+
+  const data = await res.json();
+  return data.choices[0].message.content;
+}
+
+async function callAnthropic(prompt, ai) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ai.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: ai.model || 'claude-3-5-sonnet-20240620',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      max_tokens: 500,
+    }),
+    timeout: ai.timeout,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Anthropic API error: ${res.status} ${await res.text()}`);
+  }
+
+  const data = await res.json();
+  return data.content[0].text;
+}
+
+async function callGemini(prompt, ai) {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/${ai.model || 'gemini-1.5-flash'}:generateContent?key=${ai.apiKey}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 500,
+      },
+    }),
+    timeout: ai.timeout,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Gemini API error: ${res.status} ${await res.text()}`);
+  }
+
+  const data = await res.json();
+  return data.candidates[0].content.parts[0].text;
+}
+
+export async function moderateContent(entries, rootPrefix) {
+  const { mode, threshold, suspectThreshold } = config.moderation || { mode: 'rule_engine', threshold: 50, suspectThreshold: 20 };
   
   let allText = '';
   const textFiles = [];
@@ -108,8 +282,29 @@ export function moderateContent(entries, rootPrefix) {
     }
   }
   
+  if (!allText.trim()) {
+    return {
+      status: 'passed',
+      dimension: null,
+      confidence: null,
+      reason: '',
+      file_path: null,
+      content_snippet: null,
+      model_used: mode === 'ai' ? 'no_content' : 'rule_engine',
+      scannedFiles: textFiles.length,
+    };
+  }
+  
   if (allText.length > (config.moderation?.maxTextLength || 20000)) {
     allText = allText.slice(0, config.moderation.maxTextLength);
+  }
+  
+  if (mode === 'ai') {
+    const aiResult = await moderateWithAI(allText);
+    if (aiResult) {
+      aiResult.scannedFiles = textFiles.length;
+      return aiResult;
+    }
   }
   
   const results = matchRules(allText);

@@ -15,6 +15,19 @@ export const config = {
   dataDir: path.resolve(process.env.DATA_DIR || './data'),
   maxSiteSizeBytes: num(process.env.MAX_SITE_SIZE_MB, 100) * 1024 * 1024,
   maxUploadBytes: num(process.env.MAX_UPLOAD_MB, 50) * 1024 * 1024,
+  moderation: {
+    mode: process.env.MODERATION_MODE || 'rule_engine',
+    threshold: num(process.env.MODERATION_THRESHOLD, 50),
+    suspectThreshold: num(process.env.MODERATION_SUSPECT_THRESHOLD, 20),
+    maxTextLength: num(process.env.MAX_TEXT_LENGTH, 20000),
+    maxImages: num(process.env.MAX_IMAGES_PER_DEPLOY, 50),
+    ai: {
+      provider: process.env.MODERATION_AI_PROVIDER || 'openai',
+      apiKey: process.env.MODERATION_AI_KEY || '',
+      model: process.env.MODERATION_AI_MODEL || 'gpt-4o-mini',
+      timeout: num(process.env.MODERATION_AI_TIMEOUT, 30000),
+    }
+  }
 };
 
 export const dirs = {

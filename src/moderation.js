@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { httpErr } from './errors.js';
+import crypto from 'node:crypto';
 
 const DIMENSIONS = {
   pornography: { name: '色情低俗', icon: '🔞' },
@@ -84,6 +85,10 @@ function extractSnippet(text, pattern) {
 
 async function moderateWithAI(text) {
   const { ai, threshold, suspectThreshold } = config.moderation;
+  
+  if (ai.provider.toLowerCase() === 'volcengine') {
+    return await moderateWithVolcEngine(text);
+  }
   
   if (!ai.apiKey) {
     console.warn('AI审核: 未配置API Key,降级为规则引擎');
@@ -183,6 +188,98 @@ ${text}
   }
 }
 
+async function moderateWithVolcEngine(text) {
+  const { ai, threshold, suspectThreshold } = config.moderation;
+  
+  try {
+    const result = await callVolcEngine(text, ai);
+    
+    if (!result.Decision) {
+      return null;
+    }
+
+    const decisionType = result.Decision.DecisionType;
+    const risks = result.Risks || [];
+    
+    const VOLC_DIMENSION_MAP = {
+      'Porn': 'pornography',
+      'Sex': 'pornography',
+      'Nude': 'pornography',
+      'Violence': 'violence',
+      'Blood': 'violence',
+      'Weapons': 'violence',
+      'Politics': 'political',
+      'Sensitive': 'political',
+      'Ad': 'spam',
+      'Advertising': 'spam',
+      'Fraud': 'spam',
+      'Drugs': 'drugs_gambling',
+      'Gambling': 'drugs_gambling',
+      'Drug': 'drugs_gambling',
+      'Gamble': 'drugs_gambling',
+    };
+
+    let violationDim = null;
+    let maxScore = 0;
+    let reason = '';
+
+    for (const risk of risks) {
+      const category = risk.Category;
+      const subCategory = risk.SubCategory;
+      const score = risk.Score || 80;
+      
+      if (score > maxScore) {
+        maxScore = score;
+      }
+
+      const dim = VOLC_DIMENSION_MAP[category] || VOLC_DIMENSION_MAP[subCategory];
+      if (dim) {
+        violationDim = dim;
+        if (DIMENSIONS[dim]) {
+          reason = `${DIMENSIONS[dim].icon} ${DIMENSIONS[dim].name}: ${category}`;
+          if (subCategory) {
+            reason += ` / ${subCategory}`;
+          }
+        } else {
+          reason = `⚠️ ${category}: ${subCategory || ''}`;
+        }
+      }
+    }
+
+    let status = 'passed';
+    if (decisionType === 'block') {
+      status = 'rejected';
+    } else if (decisionType === 'review') {
+      status = 'suspect';
+    } else if (decisionType === 'allow') {
+      status = 'passed';
+    } else if (maxScore > threshold) {
+      status = 'rejected';
+    } else if (maxScore > suspectThreshold) {
+      status = 'suspect';
+    }
+
+    if (status === 'passed') {
+      reason = '';
+      violationDim = null;
+    }
+
+    return {
+      status,
+      dimension: violationDim,
+      confidence: maxScore > 0 ? maxScore : null,
+      reason,
+      file_path: null,
+      content_snippet: text.length > 100 ? text.slice(0, 100) + '...' : text,
+      model_used: 'volcengine',
+      ai_result: result,
+    };
+  } catch (err) {
+    console.error('火山引擎审核失败:', err.message);
+    return null;
+  }
+}
+
 async function callOpenAI(prompt, ai) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -254,6 +351,78 @@ async function callGemini(prompt, ai) {
 
   const data = await res.json();
   return data.candidates[0].content.parts[0].text;
+}
+
+function signRequest(method, host, path, query, body, ak, sk, timestamp) {
+  const canonicalQuery = Object.entries(query).sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join('&');
+  
+  const canonicalHeaders = `host:${host}\n`;
+  const signedHeaders = 'host';
+  
+  const bodyHash = crypto.createHash('sha256').update(body).digest('hex').toLowerCase();
+  
+  const canonicalRequest = `${method}\n${path}\n${canonicalQuery}\n${canonicalHeaders}\n${signedHeaders}\n${bodyHash}`;
+  
+  const credentialScope = `${timestamp.slice(0, 8)}/sdk/request`;
+  const stringToSign = `HMAC-SHA256\n${timestamp}\n${credentialScope}\n${crypto.createHash('sha256').update(canonicalRequest).digest('hex').toLowerCase()}`;
+  
+  const kDate = crypto.createHmac('sha256', `VOLC${sk}`).update(timestamp.slice(0, 8)).digest();
+  const kRegion = crypto.createHmac('sha256', kDate).update('sdk').digest();
+  const kService = crypto.createHmac('sha256', kRegion).update('request').digest();
+  const kSigning = crypto.createHmac('sha256', kService).update(stringToSign).digest('hex').toLowerCase();
+  
+  return `HMAC-SHA256 Credential=${ak}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${kSigning}`;
+}
+
+async function callVolcEngine(text, ai) {
+  const { region, scene, apiKey: ak, secretKey: sk, timeout } = ai;
+  
+  if (!ak || !sk || !scene) {
+    throw new Error('火山引擎需要配置 AK/SK 和 Scene(AppID)');
+  }
+
+  const host = `${region}.sdk.access.llm-shield.omini-shield.com`;
+  const path = '/v2/moderate';
+  const timestamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 16);
+  
+  const query = {
+    Action: 'Moderate',
+    Version: '2025-08-31',
+  };
+  
+  const body = JSON.stringify({
+    Scene: scene,
+    Message: {
+      Role: 'user',
+      Content: text,
+      ContentType: 1,
+    },
+    UseStream: 0,
+  });
+
+  const signature = signRequest('POST', host, path, query, body, ak, sk, timestamp);
+  
+  const url = `https://${host}${path}?${new URLSearchParams(query).toString()}`;
+  
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': signature,
+      'X-Date': timestamp,
+      'X-Content-Sha256': crypto.createHash('sha256').update(body).digest('hex').toLowerCase(),
+    },
+    body,
+    timeout,
+  });
+
+  if (!res.ok) {
+    throw new Error(`火山引擎API错误: ${res.status} ${await res.text()}`);
+  }
+
+  return await res.json();
 }
 
 export async function moderateContent(entries, rootPrefix) {

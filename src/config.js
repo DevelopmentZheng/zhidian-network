@@ -24,7 +24,10 @@ export const config = {
     ai: {
       provider: process.env.MODERATION_AI_PROVIDER || 'openai',
       apiKey: process.env.MODERATION_AI_KEY || '',
+      secretKey: process.env.MODERATION_AI_SECRET_KEY || '',
       model: process.env.MODERATION_AI_MODEL || 'gpt-4o-mini',
+      region: process.env.MODERATION_AI_REGION || 'cn-beijing',
+      scene: process.env.MODERATION_AI_SCENE || '',
       timeout: num(process.env.MODERATION_AI_TIMEOUT, 30000),
     }
   }
